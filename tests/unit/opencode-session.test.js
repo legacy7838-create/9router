@@ -270,7 +270,7 @@ describe("OpenCode Stable Session Reuse (429 follow-up)", () => {
     expect(second).toBe(first);
   });
 
-  it("applies the read/shell free-tier fingerprint on Chat Completions", () => {
+  it("applies the read free-tier fingerprint on Chat Completions", () => {
     const executor = getExecutor("opencode");
 
     const chatNoTools = executor.transformRequest("nemotron-3-ultra-free", {
@@ -279,7 +279,7 @@ describe("OpenCode Stable Session Reuse (429 follow-up)", () => {
     expect(chatNoTools.stream).toBe(true);
     // tool_choice "none" is answered with 403 FreeTierError upstream.
     expect(chatNoTools.tool_choice).toBeUndefined();
-    expect(chatNoTools.tools.map((t) => t.function?.name)).toEqual(["read", "shell"]);
+    expect(chatNoTools.tools.map((t) => t.function?.name)).toEqual(["read"]);
     expect(chatNoTools.messages[0].role).toBe("system");
 
     const chatWithTools = executor.transformRequest("nemotron-3-ultra-free", {
@@ -291,13 +291,13 @@ describe("OpenCode Stable Session Reuse (429 follow-up)", () => {
       tool_choice: "auto",
     });
     expect(chatWithTools.tool_choice).toBe("auto");
-    expect(chatWithTools.tools.map((t) => t.function?.name)).toEqual(["Bash", "Read", "read", "shell"]);
+    expect(chatWithTools.tools.map((t) => t.function?.name)).toEqual(["Bash", "Read", "read"]);
 
     const chatClash = executor.transformRequest("nemotron-3-ultra-free", {
       messages: [{ role: "user", content: "hi" }],
       tools: [{ type: "function", function: { name: "read", description: "existing" } }],
     });
-    expect(chatClash.tools.map((t) => t.function?.name)).toEqual(["read_client", "read", "shell"]);
+    expect(chatClash.tools.map((t) => t.function?.name)).toEqual(["read_client", "read"]);
     expect(chatClash.tools[0].function.description).toBe("existing");
   });
 
@@ -317,8 +317,8 @@ describe("OpenCode Stable Session Reuse (429 follow-up)", () => {
 
     expect(transformed.stream).toBe(true);
     expect(transformed.reasoning?.effort).toBe("xhigh");
-    expect(transformed.tools.map((tool) => tool.name)).toEqual(["zcode_search", "read", "shell"]);
-    expect(transformed.instructions).toMatch(/Do not call the `read` or `shell` tools/);
+    expect(transformed.tools.map((tool) => tool.name)).toEqual(["zcode_search", "read"]);
+    expect(transformed.instructions).toMatch(/Do not call the `read` tool/);
   });
 
   it("declares forceStream on the opencode transport so chatCore serves SSE upstream", async () => {

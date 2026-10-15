@@ -10,8 +10,17 @@
  * restores the caller's original name.
  */
 
-/** Names required by the upstream free-tier gate. */
-export const OPENCODE_FINGERPRINT_TOOLS = ["read", "shell"];
+/**
+ * Names required by the upstream free-tier gate.
+ *
+ * Only `read` is actually required: live probes against /inference/v1 show
+ * read+shell -> 200, read-only -> 200, shell-only -> 403 FreeTierError, no tools
+ * -> 403. Sending the `shell` fingerprint as well only gave the model a tool the
+ * client had never declared (agents call their shell tool `bash`), which surfaced
+ * to the user as "Tool shell not found". A client's own `shell` now travels
+ * untouched and resolves normally.
+ */
+export const OPENCODE_FINGERPRINT_TOOLS = ["read"];
 
 // Verbatim from the OpenCode v2.0.26 CLI. Upstream compares description and
 // parameters, so do not reword or reformat these.
@@ -26,20 +35,6 @@ const FINGERPRINT_TOOL_DEFINITIONS = {
         limit: { type: "integer", minimum: 0, description: "The maximum number of lines or directory entries to read (defaults to and capped at 2000)" },
       },
       required: ["path"],
-      additionalProperties: false,
-    },
-  },
-  shell: {
-    description: "Execute a shell command and return its output. Commands run on Linux using bash. Quote file paths containing spaces or special characters. Prefer dedicated tools over shell commands when possible. When output is large, the full result is saved to a file and a truncated preview is returned. Rely on automatic truncation unless filtering the output is more useful. Commands accept an optional timeout, background commands have no timeout by default. Background commands return immediately, and you will be notified when they complete.",
-    parameters: {
-      type: "object",
-      properties: {
-        command: { type: "string", description: "Shell command string to execute" },
-        workdir: { type: "string", description: "Working directory to execute the command in. Defaults to the current working directory. When possible, avoid changing directories in the command and set the working directory here instead." },
-        timeout: { type: "integer", minimum: 0, description: "Timeout in milliseconds. Set to 0 to disable the timeout. Defaults to 120000 for foreground commands. Background commands have no timeout by default." },
-        background: { type: "boolean", description: "Run the command in the background and return immediately (useful for dev servers and long-running builds). You do not need to use '&' at the end of the command when using this parameter. You will be notified when it completes. DO NOT poll for completion." },
-      },
-      required: ["command"],
       additionalProperties: false,
     },
   },
@@ -231,6 +226,49 @@ function noteUnavailableTools(body, flat, names) {
 }
 
 /**
+ * Pick the caller tool that can stand in for a fingerprint tool the caller never
+ * declared, by matching the fingerprint's required parameters against the caller's
+ * schema. Keeps the model off tools the client cannot execute.
+ *
+ * @returns {string|null} caller tool name, or null when nothing matches
+ */
+function compatibleClientTool(fingerprintName, clientTools) {
+  const required = FINGERPRINT_TOOL_DEFINITIONS[fingerprintName]?.parameters?.required || [];
+  if (!required.length) return null;
+  let best = null;
+  let bestScore = 0;
+  for (const tool of clientTools) {
+    const def = chatFunctionOf(tool) || tool;
+    const props = def?.parameters?.properties;
+    if (!props || typeof props !== "object" || Array.isArray(props)) continue;
+    const names = Object.keys(props);
+    const score = required.filter((key) => names.includes(key)).length;
+    if (score > bestScore) {
+      bestScore = score;
+      best = toolNameOf(tool);
+    }
+  }
+  return bestScore === required.length ? best : null;
+}
+
+/**
+ * Response-side map. On top of the alias renames it records what to do with a call
+ * aimed at a fingerprint tool the caller never declared: rewrite it onto the
+ * caller's closest equivalent, or drop it (null) when nothing is equivalent. Both
+ * keep an undeclared tool from reaching the client as "Tool ... not found".
+ */
+function buildResponseMap(aliasMap, appended, clientTools) {
+  const responseMap = new Map(aliasMap);
+  if (!appended.length || !Array.isArray(clientTools) || !clientTools.length) return responseMap;
+  const clientNames = new Set(clientTools.map(toolNameOf).filter(Boolean));
+  for (const name of appended) {
+    if (clientNames.has(name)) continue;
+    responseMap.set(name, compatibleClientTool(name, clientTools));
+  }
+  return responseMap;
+}
+
+/**
  * Full request-side pass: alias conflicting caller tools, append OpenCode's
  * fingerprint definitions, and tell the model the appended ones are off-limits.
  *
@@ -241,6 +279,7 @@ function noteUnavailableTools(body, flat, names) {
 export function applyFingerprintTools(body, flat) {
   if (!body || typeof body !== "object") return new Map();
 
+  const clientTools = Array.isArray(body.tools) ? body.tools.slice() : [];
   const { tools, map } = concealFingerprintToolNames(body.tools);
   body.tools = Array.isArray(tools) ? tools : [];
   const appended = appendMissingFingerprintTools(body.tools, flat);
@@ -252,7 +291,7 @@ export function applyFingerprintTools(body, flat) {
   // answers tool_choice "none" with 403 FreeTierError.
   if (!body.tool_choice && flat) body.tool_choice = "auto";
 
-  recordRenamedToolNames(body, map);
+  recordRenamedToolNames(body, buildResponseMap(map, appended, clientTools));
   return map;
 }
 
@@ -292,10 +331,21 @@ export function restoreToolNames(payload, map) {
 
   // Claude non-streaming message body.
   if (Array.isArray(payload.content)) {
-    put("content", payload.content.map((block) =>
-      block?.type === "tool_use" && typeof block.name === "string" && map.has(block.name)
-        ? { ...block, name: map.get(block.name) }
-        : block));
+    const blocks = [];
+    let contentChanged = false;
+    for (const block of payload.content) {
+      if (block?.type === "tool_use" && typeof block.name === "string" && map.has(block.name)) {
+        const target = map.get(block.name);
+        // null = no caller tool can run this; dropping keeps an undeclared tool
+        // from reaching the client, which would otherwise fail as "not found".
+        if (target == null) { contentChanged = true; continue; }
+        blocks.push({ ...block, name: target });
+        contentChanged = true;
+        continue;
+      }
+      blocks.push(block);
+    }
+    if (contentChanged) put("content", blocks);
   }
 
   // OpenAI Chat Completions, both streaming delta and JSON message shapes.
@@ -306,14 +356,18 @@ export function restoreToolNames(payload, map) {
       for (const holder of ["delta", "message"]) {
         const value = choice?.[holder];
         if (!value || !Array.isArray(value.tool_calls) || value.tool_calls.length === 0) continue;
-        const calls = value.tool_calls.map((call) => {
+        const calls = [];
+        for (const call of value.tool_calls) {
           const name = call?.function?.name;
           if (typeof name === "string" && map.has(name)) {
+            const target = map.get(name);
             changed = true;
-            return { ...call, function: { ...call.function, name: map.get(name) } };
+            if (target == null) continue;
+            calls.push({ ...call, function: { ...call.function, name: target } });
+            continue;
           }
-          return call;
-        });
+          calls.push(call);
+        }
         next[holder] = { ...value, tool_calls: calls };
       }
       return changed ? next : choice;
@@ -322,16 +376,26 @@ export function restoreToolNames(payload, map) {
 
   // OpenAI Responses final JSON body.
   if (Array.isArray(payload.output)) {
-    put("output", payload.output.map((item) =>
-      item?.type === "function_call" && typeof item.name === "string" && map.has(item.name)
-        ? { ...item, name: map.get(item.name) }
-        : item));
+    const items = [];
+    let outputChanged = false;
+    for (const item of payload.output) {
+      if (item?.type === "function_call" && typeof item.name === "string" && map.has(item.name)) {
+        const target = map.get(item.name);
+        if (target == null) { outputChanged = true; continue; }
+        items.push({ ...item, name: target });
+        outputChanged = true;
+        continue;
+      }
+      items.push(item);
+    }
+    if (outputChanged) put("output", items);
   }
 
   // OpenAI Responses SSE events such as response.output_item.added/done.
   const item = payload.item;
   if (item?.type === "function_call" && typeof item.name === "string" && map.has(item.name)) {
-    put("item", { ...item, name: map.get(item.name) });
+    const target = map.get(item.name);
+    if (target != null) put("item", { ...item, name: target });
   }
 
   return out;
