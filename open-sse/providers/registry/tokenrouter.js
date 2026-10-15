@@ -50,15 +50,7 @@ export default {
     { id: "z-ai/glm-5-turbo", name: "Glm 5 Turbo" },
     { id: "x-ai/grok-4.5", name: "Grok 4.5" },
   ],
-  serviceKinds: ["llm", "embedding", "image"],
-  embeddingConfig: {
-    baseUrl: "https://api.tokenrouter.com/v1/embeddings",
-    authType: "apikey",
-    authHeader: "bearer",
-  },
-  imageConfig: {
-    baseUrl: "https://api.tokenrouter.com/v1/images/generations",
-  },
+  serviceKinds: ["llm"],
   modelsFetcher: { url: "https://api.tokenrouter.com/v1/models", type: "openai" },
   passthroughModels: true,
 };

@@ -35,22 +35,8 @@ export default {
     { id: "llama-3.3-70b", name: "Llama 3.3 70B" },
     { id: "hermes-3-llama-3.1-405b", name: "Hermes 3 Llama 3.1 405B" },
     { id: "mistral-small-3-2-24b-instruct", name: "Mistral Small 3.2 24B" },
-    { id: "text-embedding-3-large", name: "Text Embedding 3 Large", kind: "embedding" },
-    { id: "text-embedding-bge-m3", name: "BGE-M3 Embedding", kind: "embedding" },
-    { id: "text-embedding-qwen3-8b", name: "Qwen3 8B Embedding", kind: "embedding" },
-    { id: "venice-sd35", name: "Venice SD3.5", params: ["n", "size"], kind: "image" },
-    { id: "flux-2-pro", name: "FLUX.2 Pro", params: ["n", "size"], kind: "image" },
-    { id: "gpt-image-2", name: "GPT Image 2 (via Venice)", params: ["n", "size", "quality"], kind: "image" },
   ],
-  serviceKinds: ["llm", "embedding", "image"],
-  embeddingConfig: {
-    baseUrl: "https://api.venice.ai/api/v1/embeddings",
-    authType: "apikey",
-    authHeader: "bearer",
-  },
-  imageConfig: {
-    baseUrl: "https://api.venice.ai/api/v1/images/generations",
-  },
+  serviceKinds: ["llm"],
   modelsFetcher: { url: "https://api.venice.ai/api/v1/models", type: "openai" },
   passthroughModels: true,
 };

@@ -17,7 +17,7 @@ export default {
     deprecationNotice: "RISK_NOTICE",
   },
   category: "oauth",
-  serviceKinds: ["llm", "image", "webSearch"],
+  serviceKinds: ["llm"],
   transport: {
     baseUrls: [ANTIGRAVITY_IDE_BASE_URL],
     format: "antigravity",
@@ -69,8 +69,6 @@ export default {
     { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6 (Thinking)" },
     { id: "claude-opus-4-6-thinking", name: "Claude Opus 4.6 (Thinking)" },
     { id: "gpt-oss-120b-medium", name: "GPT-OSS 120B (Medium)" },
-    // Image generation models
-    { id: "gemini-3.1-flash-image", name: "Gemini 3.1 Flash (Image)", kind: "image", imageGen: true, capabilities: ["textToImage"] },
   ],
   oauth: {
     authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth",

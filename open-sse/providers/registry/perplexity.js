@@ -26,7 +26,7 @@ export default {
     { id: "sonar-pro", name: "Sonar Pro" },
     { id: "sonar", name: "Sonar" },
   ],
-  serviceKinds: ["llm","webSearch"],
+  serviceKinds: ["llm"],
   searchViaChat: {
     defaultModel: "sonar",
     endpoint: "https://api.perplexity.ai/chat/completions",
