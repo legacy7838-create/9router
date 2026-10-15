@@ -25,48 +25,6 @@ export const SKILLS = [
     endpoint: "/v1/chat/completions",
     icon: "chat",
   },
-  {
-    id: "9router-image",
-    name: "Image Generation",
-    description: "Text-to-image via DALL-E, Imagen, FLUX, MiniMax, SDWebUI…",
-    endpoint: "/v1/images/generations",
-    icon: "image",
-  },
-  {
-    id: "9router-tts",
-    name: "Text-to-Speech",
-    description: "OpenAI / ElevenLabs / Edge / Google / Deepgram voices.",
-    endpoint: "/v1/audio/speech",
-    icon: "record_voice_over",
-  },
-  {
-    id: "9router-stt",
-    name: "Speech-to-Text",
-    description: "Transcribe audio via OpenAI Whisper, Groq, Gemini, Deepgram, AssemblyAI…",
-    endpoint: "/v1/audio/transcriptions",
-    icon: "mic",
-  },
-  {
-    id: "9router-embeddings",
-    name: "Embeddings",
-    description: "Vectors for RAG / semantic search via OpenAI, Gemini, Mistral…",
-    endpoint: "/v1/embeddings",
-    icon: "scatter_plot",
-  },
-  {
-    id: "9router-web-search",
-    name: "Web Search",
-    description: "Web and X search via Tavily / Exa / Brave / Serper / SearXNG / Google PSE / You.com / Xquik.",
-    endpoint: "/v1/search",
-    icon: "search",
-  },
-  {
-    id: "9router-web-fetch",
-    name: "Web Fetch",
-    description: "URL → markdown / text / HTML via Firecrawl, Jina, Tavily, Exa.",
-    endpoint: "/v1/web/fetch",
-    icon: "language",
-  },
 ];
 
 export function getSkillRawUrl(id) {

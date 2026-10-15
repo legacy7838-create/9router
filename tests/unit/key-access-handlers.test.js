@@ -45,13 +45,6 @@ vi.mock("@/sse/services/tokenRefresh.js", () => ({
 vi.mock("open-sse/handlers/chatCore.js", () => ({ handleChatCore: mocks.handleChatCore }));
 
 const { handleChat } = await import("../../src/sse/handlers/chat.js");
-const { handleEmbeddings } = await import("../../src/sse/handlers/embeddings.js");
-const { handleImageGeneration } = await import("../../src/sse/handlers/imageGeneration.js");
-const { handleTts } = await import("../../src/sse/handlers/tts.js");
-const { handleStt } = await import("../../src/sse/handlers/stt.js");
-const { handleVideoCreate } = await import("../../src/sse/handlers/videoGeneration.js");
-const { handleSearch } = await import("../../src/sse/handlers/search.js");
-const { handleFetch } = await import("../../src/sse/handlers/fetch.js");
 const { handleSystemone } = await import("../../src/sse/handlers/systemone.js");
 const geminiRoute = await import("../../src/app/api/v1beta/models/[...path]/route.js");
 const modelsRoute = await import("../../src/app/api/v1/models/route.js");
@@ -156,26 +149,7 @@ describe("chat (/v1/chat/completions, /v1/messages, /v1/responses all use handle
 
 // Each non-chat handler: [name, call(model, key), allowedModel, deniedModel]
 const handlers = [
-  ["embeddings", (m, k) => handleEmbeddings(post("/v1/embeddings", { model: m, input: "x" }, k)), "openai/text-embedding-3-small", "openai/text-embedding-3-large"],
-  ["image", (m, k) => handleImageGeneration(post("/v1/images/generations", { model: m, prompt: "x" }, k)), "openai/dall-e-3", "openai/gpt-image-1"],
-  ["tts", (m, k) => handleTts(post("/v1/audio/speech", { model: m, input: "x" }, k)), "openai/tts-1", "openai/tts-1-hd"],
-  ["stt", (m, k) => {
-    const fd = new FormData();
-    fd.set("model", m);
-    fd.set("file", new Blob([new Uint8Array(4)], { type: "audio/wav" }), "a.wav");
-    return handleStt(new Request("http://localhost/v1/audio/transcriptions", { method: "POST", headers: auth(k), body: fd }));
-  }, "openai/whisper-1", "groq/whisper-large-v3"],
-  ["video", (m, k) => handleVideoCreate(post("/v1/videos/generations", { model: m, prompt: "x" }, k), "generations"), "xai/grok-imagine-video", "xai/grok-imagine-video-pro"],
-  ["search", (m, k) => handleSearch(post("/v1/search", { model: m, query: "x" }, k)), "tavily", "exa"],
-  ["fetch", (m, k) => handleFetch(post("/v1/web/fetch", { model: m, url: "https://example.com" }, k)), "tavily", "firecrawl"],
   ["systemone", (m, k) => handleSystemone(post("/v1/systemone", { model: m, state: {}, questions: { q: "?" } }, k)), "openai/gpt-4o", "openai/gpt-4.1"],
-  ["gemini-native-tts", (m, k) => geminiRoute.POST(
-    new Request(`http://localhost/v1beta/models/${m}:generateContent`, {
-      method: "POST", headers: { "Content-Type": "application/json", ...auth(k) },
-      body: JSON.stringify({ contents: [{ parts: [{ text: "x" }] }], generationConfig: { responseModalities: ["AUDIO"] } }),
-    }),
-    { params: Promise.resolve({ path: [`${m}:generateContent`] }) },
-  ), "gemini-2.5-flash-preview-tts", "gemini-2.5-pro-preview-tts"],
 ];
 
 describe.each(handlers)("%s handler is wired", (_name, call, allowed, denied) => {
@@ -199,14 +173,6 @@ describe.each(handlers)("%s handler is wired", (_name, call, allowed, denied) =>
   });
 });
 
-describe("video: a body without a readable model is denied for restricted keys", () => {
-  it("multipart / no model -> 403 for restricted, untouched for unrestricted", async () => {
-    const noModel = (k) => handleVideoCreate(post("/v1/videos/generations", { prompt: "x" }, k), "generations");
-    expect((await noModel("sk-media")).status).toBe(403);
-    expect((await noModel("sk-open")).status).not.toBe(403);
-  });
-});
-
 describe("/v1/models routes filter by key", () => {
   const list = async (k) => (await (await modelsRoute.GET(new Request("http://localhost/v1/models", { headers: auth(k) }))).json()).data.map((m) => m.id);
 
@@ -221,11 +187,8 @@ describe("/v1/models routes filter by key", () => {
     expect(await list("sk-empty")).toEqual([]);
     expect(await list(null)).toEqual(all); // no key: unchanged (middleware governs remote access)
   });
-  it("/v1/models/{kind} and single-model lookup are filtered too", async () => {
+  it("/v1/models/{provider}/{model} single-model lookup is filtered too", async () => {
     const kind = async (k, path) => modelsKindRoute.GET(new Request(`http://localhost/v1/models/${path.join("/")}`, { headers: auth(k) }), { params: Promise.resolve({ model: path }) });
-    const emb = await (await kind("sk-open", ["embedding"])).json();
-    expect(emb.data.length).toBeGreaterThan(0);
-    expect((await (await kind("sk-empty", ["embedding"])).json()).data).toEqual([]);
     const all = (await (await modelsRoute.GET(new Request("http://localhost/v1/models"))).json()).data;
     const one = all.find((m) => m.owned_by !== "combo").id;
     expect((await kind("sk-open", one.split("/"))).status).toBe(200);

@@ -9,10 +9,7 @@ import { MEDIA_PROVIDER_KINDS, AI_PROVIDERS, isCustomEmbeddingProvider } from "@
 import ConnectionsCard from "@/app/(dashboard)/dashboard/providers/components/ConnectionsCard";
 import ModelsCard from "@/app/(dashboard)/dashboard/providers/components/ModelsCard";
 import { KIND_EXAMPLE_CONFIG } from "./components/exampleShared";
-import { EmbeddingExampleCard } from "./components/EmbeddingExampleCard";
-import { TtsExampleCard } from "./components/TtsExampleCard";
 import { GenericExampleCard } from "./components/GenericExampleCard";
-import { SttExampleCard } from "./components/SttExampleCard";
 
 // MediaProviderDetailPage
 export default function MediaProviderDetailPage() {
@@ -171,16 +168,12 @@ export default function MediaProviderDetailPage() {
         />
       )}
 
-      {/* Provider Info — config-driven, supports searchConfig, fetchConfig, ttsConfig, embeddingConfig, systemoneConfig, searchViaChat */}
-      {!isCustom && (provider.searchConfig || provider.fetchConfig || provider.ttsConfig || provider.sttConfig || provider.embeddingConfig || provider.systemoneConfig || provider.searchViaChat) && (
+      {/* Provider Info — System One config / search-via-chat metadata */}
+      {!isCustom && (provider.systemoneConfig || provider.searchViaChat) && (
         <ProviderInfoCard
           config={
-            kind === "webFetch" ? provider.fetchConfig
-              : kind === "tts" ? provider.ttsConfig
-              : kind === "stt" ? provider.sttConfig
-              : kind === "embedding" ? provider.embeddingConfig
-              : kind === "systemone" ? provider.systemoneConfig
-              : provider.searchConfig || { mode: "chat-completions", defaultModel: provider.searchViaChat?.defaultModel, pricingUrl: provider.searchViaChat?.pricingUrl, freeTier: provider.searchViaChat?.freeTier }
+            kind === "systemone" ? provider.systemoneConfig
+              : { mode: "chat-completions", defaultModel: provider.searchViaChat?.defaultModel, pricingUrl: provider.searchViaChat?.pricingUrl, freeTier: provider.searchViaChat?.freeTier }
           }
           provider={provider}
           title={`${kindConfig.label} Config`}
@@ -188,11 +181,6 @@ export default function MediaProviderDetailPage() {
       )}
 
       {/* Example — per kind */}
-      {kind === "embedding" && (
-        <EmbeddingExampleCard providerId={id} customAlias={customNode?.prefix} />
-      )}
-      {kind === "tts" && <TtsExampleCard providerId={id} />}
-      {kind === "stt" && !isCustom && <SttExampleCard providerId={id} />}
       {!isCustom && KIND_EXAMPLE_CONFIG[kind] && <GenericExampleCard providerId={id} kind={kind} />}
 
       {isCustom && (
