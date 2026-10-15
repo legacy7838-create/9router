@@ -20,6 +20,26 @@
 
 ---
 
+## 📦 Install (this fork)
+
+Works on **Windows, macOS and Linux** — no npm account required. This installs the
+`9router` command from the latest GitHub Release tarball:
+
+```bash
+npm i -g https://github.com/legacy7838-create/9router/releases/latest/download/9router-cli.tgz
+9router
+```
+
+`9router` starts the router and opens the dashboard at `http://localhost:20128`.
+
+> The tarball is built and attached to every `v*` tag by
+> `.github/workflows/release-cli.yml`. No local build needed — the Linux/macOS/Windows
+> agnostic bundle already contains the compiled server.
+
+Prefer the upstream published package instead? Use `npm i -g 9router`.
+
+---
+
 ## 🤔 Why 9Router?
 
 **Stop wasting money, tokens and hitting limits:**

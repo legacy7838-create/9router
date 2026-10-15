@@ -11,7 +11,6 @@
 - **Providers**: add MiniMax Code (`mcode`) credits provider
 - **System One**: support Cloudflare AI `clef-flash` endpoint
 - **Codebuddy CN**: sync catalog with 2026-09-30 server config
-- **Dashboard**: open 9Remote sidebar item directly to website
 
 ## Fixes
 - **Dashboard**: fix mobile layouts for API Keys card (alignment, code wrap), header breadcrumbs (overflow collision), model chips (full width, break-all), and Claude CLI settings
@@ -42,7 +41,7 @@
 - **Providers**: per-provider custom header overrides from the registry
 - **Agnes**: seed the 2.5/3.0 model ids in the registry
 - **Usage**: sync `?provider=` URL param with provider filter for bookmarkable deep links (#4395)
-- **Dashboard**: drop NEW badges in sidebar, mark 9Remote as HOT
+- **Dashboard**: drop NEW badges in sidebar
 
 ## Fixes
 - **Hermes**: stop breaking the config write when an earlier save left the `model: ""` sentinel behind (duplicate-key handling in `config.yaml`)

@@ -1,0 +1,71 @@
+name: Release CLI
+
+# Builds the 9Router CLI package (compiled Next.js standalone server + CLI) and
+# attaches an installable tarball to a GitHub Release. Triggered by pushing a
+# `v*` tag, or manually from the Actions tab.
+#
+# Users install with (no npm account, Windows/macOS/Linux):
+#   npm i -g https://github.com/<owner>/<repo>/releases/latest/download/9router-cli.tgz
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-cli-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Resolve release tag
+        id: meta
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=v$(node -p "require('./cli/package.json').version")" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install app dependencies
+        # package-lock.json is gitignored in this repo, so use install (not ci).
+        run: npm install --no-audit --no-fund
+
+      - name: Build CLI package (Next.js standalone + assets)
+        run: npm --prefix cli run build
+
+      - name: Pack installable tarball
+        run: |
+          cd cli
+          npm pack
+          mv 9router-*.tgz ../9router-cli.tgz
+          ls -lh ../9router-cli.tgz
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ steps.meta.outputs.tag }}"
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --notes "9Router CLI $TAG
+
+          Install (Windows / macOS / Linux):
+          \`\`\`
+          npm i -g https://github.com/${{ github.repository }}/releases/latest/download/9router-cli.tgz
+          \`\`\`" || true
+          gh release upload "$TAG" 9router-cli.tgz --clobber
