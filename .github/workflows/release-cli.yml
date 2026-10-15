@@ -64,8 +64,17 @@ jobs:
             --title "$TAG" \
             --notes "9Router CLI $TAG
 
-          Install (Windows / macOS / Linux):
+          npm 11 and older (Node 18/20/22):
           \`\`\`
           npm i -g https://github.com/${{ github.repository }}/releases/latest/download/9router-cli.tgz
+          \`\`\`
+
+          npm 12+ (Node 24+) blocks remote installs; use either:
+          \`\`\`
+          npm i -g --allow-remote=all https://github.com/${{ github.repository }}/releases/latest/download/9router-cli.tgz
+          \`\`\`
+          or download \`9router-cli.tgz\` from this release and run:
+          \`\`\`
+          npm i -g ./9router-cli.tgz
           \`\`\`" || true
           gh release upload "$TAG" 9router-cli.tgz --clobber

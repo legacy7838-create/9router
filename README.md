@@ -22,19 +22,36 @@
 
 ## 📦 Install (this fork)
 
-Works on **Windows, macOS and Linux** — no npm account required. This installs the
-`9router` command from the latest GitHub Release tarball:
+Works on **Windows, macOS and Linux** — no npm account required. The `9router`
+command is installed from the latest GitHub Release tarball.
+
+**npm 11 and older (Node 18 / 20 / 22 LTS):**
 
 ```bash
 npm i -g https://github.com/legacy7838-create/9router/releases/latest/download/9router-cli.tgz
 9router
 ```
 
-`9router` starts the router and opens the dashboard at `http://localhost:20128`.
+**npm 12+ (Node 24+) blocks remote installs by default**, so use one of these:
 
-> The tarball is built and attached to every `v*` tag by
-> `.github/workflows/release-cli.yml`. No local build needed — the Linux/macOS/Windows
-> agnostic bundle already contains the compiled server.
+```bash
+# 1) allow this one remote install
+npm i -g --allow-remote=all https://github.com/legacy7838-create/9router/releases/latest/download/9router-cli.tgz
+
+# 2) or download the file, then install it locally (works on every npm version)
+curl -L -o 9router-cli.tgz https://github.com/legacy7838-create/9router/releases/latest/download/9router-cli.tgz
+npm i -g ./9router-cli.tgz
+```
+
+On Windows PowerShell, download `9router-cli.tgz` from the
+[Releases page](https://github.com/legacy7838-create/9router/releases) (or
+`curl.exe -L -o 9router-cli.tgz <url>`), then run `npm i -g .\9router-cli.tgz`.
+
+`9router` then starts the router and opens the dashboard at `http://localhost:20128`.
+
+> No native modules are needed (pure-JS SQLite), so it installs on Windows without a
+> compiler or build tools. The tarball is built and attached to every `v*` tag by
+> `.github/workflows/release-cli.yml`.
 
 Prefer the upstream published package instead? Use `npm i -g 9router`.
 
