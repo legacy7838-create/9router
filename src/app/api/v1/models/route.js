@@ -598,25 +598,6 @@ export async function buildModelsList(kindFilter, options = {}) {
         }
         models.push(model);
       }
-
-      // Web search/fetch — provider IS the model, expose as {alias}/search and/or {alias}/fetch with explicit kind
-      const providerInfo = AI_PROVIDERS[providerId];
-      if (kindFilter.includes("webSearch") && providerInfo?.searchConfig) {
-        models.push({
-          id: `${outputAlias}/search`,
-          object: "model",
-          kind: "webSearch",
-          owned_by: outputAlias,
-        });
-      }
-      if (kindFilter.includes("webFetch") && providerInfo?.fetchConfig) {
-        models.push({
-          id: `${outputAlias}/fetch`,
-          object: "model",
-          kind: "webFetch",
-          owned_by: outputAlias,
-        });
-      }
     }
   }
 

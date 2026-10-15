@@ -3,9 +3,8 @@ import REGISTRY from "open-sse/providers/registry/index.js";
 import { RISK_NOTICE } from "@/shared/constants/providersDisplay.js";
 
 const MEDIA_ENTRY_KEYS = [
-  "serviceKinds", "ttsConfig", "sttConfig", "embeddingConfig",
-  "imageConfig", "imageToTextConfig", "videoConfig", "musicConfig",
-  "searchViaChat", "searchConfig", "fetchConfig", "credentialFallback", "systemoneConfig",
+  "serviceKinds", "imageToTextConfig",
+  "searchViaChat", "credentialFallback", "systemoneConfig",
   "modelsFetcher", "mediaPriority", "hiddenKinds",
 ];
 
@@ -70,17 +69,9 @@ export const APIKEY_PROVIDERS = byCategory("apikey");
 // Web Cookie Providers (use browser session cookie instead of API key)
 export const WEB_COOKIE_PROVIDERS = byCategory("webCookie");
 
-// Media provider kinds — each kind maps to a route and endpoint config
+// Media provider kinds — each kind maps to a route and endpoint config.
+// Only System One remains; other media verticals were removed from this deployment.
 export const MEDIA_PROVIDER_KINDS = [
-  { id: "embedding",   label: "Embedding",      icon: "data_array",        endpoint: { method: "POST", path: "/v1/embeddings" } },
-  { id: "image",       label: "Text to Image",  icon: "brush",             endpoint: { method: "POST", path: "/v1/images/generations" } },
-  { id: "imageToText", label: "Image to Text",  icon: "image_search",      endpoint: { method: "POST", path: "/v1/images/understanding" } },
-  { id: "tts",         label: "Text To Speech", icon: "record_voice_over", endpoint: { method: "POST", path: "/v1/audio/speech" } },
-  { id: "stt",         label: "Speech To Text", icon: "mic",               endpoint: { method: "POST", path: "/v1/audio/transcriptions" } },
-  { id: "webSearch",   label: "Web Search",     icon: "travel_explore",    endpoint: { method: "POST", path: "/v1/search" } },
-  { id: "webFetch",    label: "Web Fetch",      icon: "language",          endpoint: { method: "POST", path: "/v1/web/fetch" } },
-  { id: "video",       label: "Video",          icon: "movie",             endpoint: { method: "POST", path: "/v1/videos/generations" } },
-  { id: "music",       label: "Music",          icon: "music_note",        endpoint: { method: "POST", path: "/v1/audio/music" } },
   { id: "systemone",   label: "System One",     icon: "psychology",        endpoint: { method: "POST", path: "/v1/systemone" }, isNew: true },
 ];
 
