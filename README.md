@@ -47,6 +47,16 @@ On Windows PowerShell, download `9router-cli.tgz` from the
 [Releases page](https://github.com/legacy7838-create/9router/releases) (or
 `curl.exe -L -o 9router-cli.tgz <url>`), then run `npm i -g .\9router-cli.tgz`.
 
+**Windows: one command (npm 12 / Node 24+):**
+
+```powershell
+npm i -g --allow-remote=all https://github.com/legacy7838-create/9router/releases/latest/download/9router-cli.tgz
+```
+
+OpenCode's free models additionally need the Bun runtime, because the free tier
+only accepts Bun's TLS fingerprint (`powershell -c "irm bun.sh/install.ps1 | iex"`).
+Every other provider works without Bun.
+
 `9router` then starts the router and opens the dashboard at `http://localhost:20128`.
 
 > No native modules are needed (pure-JS SQLite), so it installs on Windows without a

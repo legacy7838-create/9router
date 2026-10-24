@@ -80,6 +80,12 @@ export class BaseExecutor {
     return body;
   }
 
+  // Override in subclass when the upstream must be reached through another
+  // transport (e.g. OpenCode's free tier only accepts the Bun TLS fingerprint).
+  async fetchResponse(url, init, proxyOptions) {
+    return proxyAwareFetch(url, init, proxyOptions);
+  }
+
   shouldRetry(status, urlIndex) {
     return status === HTTP_STATUS.RATE_LIMITED && urlIndex + 1 < this.getFallbackCount();
   }
@@ -143,7 +149,7 @@ export class BaseExecutor {
         const bodyStr = JSON.stringify(transformedBody);
         const fetchT0 = Date.now();
         dbg("FETCH", `${this.provider.toUpperCase()} → ${url} | body=${bodyStr.length}B | connectTimeout=${timeoutMs}ms`);
-        const response = await proxyAwareFetch(url, {
+        const response = await this.fetchResponse(url, {
           method: "POST",
           headers,
           body: bodyStr,

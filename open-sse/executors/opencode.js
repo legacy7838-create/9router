@@ -6,7 +6,9 @@ import { getThinkingLevels } from "../providers/thinkingLevels.js";
 import { injectReasoningContent } from "../utils/reasoningContentInjector.js";
 import { resolveSessionId } from "../utils/sessionManager.js";
 import { isMuseSparkModel } from "../providers/models/helpers.js";
-import { applyFingerprintTools } from "../utils/opencodeFingerprint.js";
+import { applyFingerprintTools, ensureOpencodeEnvBlock } from "../utils/opencodeFingerprint.js";
+import { opencodeBunFetch, resolveBunProxyUrl } from "../utils/opencodeBunTransport.js";
+import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { ANTHROPIC_API_VERSION } from "../providers/shared.js";
 import {
   normalizeResponsesInput,
@@ -136,8 +138,9 @@ function identityKey(credentials) {
   return "opencode:default";
 }
 
-export function stableSessionId(credentials) {
-  const key = identityKey(credentials);
+export function stableSessionId(credentials, scope = "") {
+  const baseKey = identityKey(credentials);
+  const key = scope ? `${baseKey}::${scope}` : baseKey;
   const existing = stableOpencodeSessions.get(key);
   if (existing) {
     existing.lastUsed = Date.now();
@@ -199,6 +202,23 @@ function isMessagesModel(model) {
   return MESSAGES_MODELS.has(baseModelId(model));
 }
 
+function fallbackSessionForHint(raw, credentials, clientTool) {
+  const value = String(raw ?? "").trim();
+  // A client that already speaks OpenCode (the CLI itself) sends a real
+  // timestamped session; forwarding it keeps its quota bucket.
+  if (OPENCODE_SESSION_RE.test(value)) return value;
+  // Never hash the timestamp: live probes show upstream only grants free quota
+  // to session IDs whose decoded prefix matches the current clock, and answers
+  // 429 FreeUsageLimitError for hash-derived prefixes. Mint a real one once per
+  // conversation and reuse it so the quota bucket stays stable.
+  const digest = crypto
+    .createHash("sha256")
+    .update(`${value}\0${clientTool || "generic"}`)
+    .digest("hex")
+    .slice(0, 32);
+  return stableSessionId(credentials, `hint:${digest}`);
+}
+
 function resolveOpencodeSession(body, credentials, providerSessionId, clientTool) {
   const headers = credentials?.rawHeaders || {};
   const native = nativeSession(headers);
@@ -213,7 +233,7 @@ function resolveOpencodeSession(body, credentials, providerSessionId, clientTool
   }
 
   const hinted = incoming || normalizeSession(providerSessionId);
-  if (hinted) return translateSessionId(hinted, clientTool);
+  if (hinted) return fallbackSessionForHint(hinted, credentials, clientTool);
 
   if (credentials?.connectionId || bodyHasSessionHints(body)) {
     let viaManager = null;
@@ -227,7 +247,7 @@ function resolveOpencodeSession(body, credentials, providerSessionId, clientTool
     } catch {
       viaManager = null;
     }
-    if (viaManager) return translateSessionId(viaManager, clientTool);
+    if (viaManager) return fallbackSessionForHint(viaManager, credentials, clientTool);
   }
 
   return stableSessionId(credentials);
@@ -322,6 +342,9 @@ function normalizeOpencodeReasoning(model, body) {
 export class OpenCodeExecutor extends BaseExecutor {
   constructor() {
     super("opencode", PROVIDERS.opencode);
+    // Upstream's free tier is gated on the TLS/JA3 fingerprint, so this lane
+    // must leave through Bun; other transports are answered with 429.
+    this.usesBunTransport = true;
   }
 
   prepareRequestCredentials({ body, credentials, providerSessionId, clientTool } = {}) {
@@ -367,14 +390,33 @@ export class OpenCodeExecutor extends BaseExecutor {
       // already supplied tools. ZCode/Claude Code requests normally have
       // non-empty tool arrays; skipping cloaking here triggers 403 FreeTierError.
       applyFingerprintTools(body, true);
+      ensureOpencodeEnvBlock(body, true);
     } else if (body && typeof body === "object") {
       applyFingerprintTools(body, false);
+      ensureOpencodeEnvBlock(body, false);
     }
     return injectReasoningContent({ provider: this.provider, model, body });
   }
 
   async execute(args) {
     return super.execute({ ...args, credentials: this.prepareRequestCredentials(args) });
+  }
+
+  // Free-tier requests are only accepted from the Bun/CLI TLS stack. Route them
+  // through Bun (in-process when the server already runs on Bun, otherwise a
+  // local Bun sidecar) instead of Node/undici, curl-style clients or relays.
+  async fetchResponse(url, init, proxyOptions) {
+    if (process.env.VITEST) return proxyAwareFetch(url, init, proxyOptions);
+    const proxyUrl = resolveBunProxyUrl(url, proxyOptions);
+    try {
+      return await opencodeBunFetch(url, init, proxyUrl);
+    } catch (error) {
+      // A configured proxy is a privacy contract: never fall back to the direct
+      // IP. Without one, keep the lane usable on hosts where Bun is missing.
+      if (proxyUrl) throw error;
+      console.warn(`[opencode] Bun transport unavailable (${error.message}); falling back to native fetch`);
+      return proxyAwareFetch(url, init, proxyOptions);
+    }
   }
 
   // Free tier moved from /zen/v1 to /inference/v1 (OpenCode v2); /zen/v1 now

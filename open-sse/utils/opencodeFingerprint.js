@@ -22,6 +22,72 @@
  */
 export const OPENCODE_FINGERPRINT_TOOLS = ["read"];
 
+// Free-tier quota accounting only starts once the prompt carries a complete
+// environment block; probing shows <env></env> alone is enough, while a
+// partial block (opening tag without closing) is answered with 429
+// FreeUsageLimitError. The real CLI appends this block to its system prompt.
+const ENV_BLOCK = "<env>\n</env>";
+
+function hasEnvBlock(text) {
+  return typeof text === "string" && text.includes("<env>") && text.includes("</env>");
+}
+
+function appendEnvToContent(content) {
+  if (typeof content === "string") {
+    if (hasEnvBlock(content)) return { content, changed: false };
+    return { content: `${content.trim() ? `${content}\n\n` : ""}${ENV_BLOCK}`, changed: true };
+  }
+  if (!Array.isArray(content)) return { content, changed: false };
+  for (const part of content) {
+    if (part && typeof part === "object" && typeof part.text === "string") {
+      if (hasEnvBlock(part.text)) return { content, changed: false };
+      part.text = `${part.text.trim() ? `${part.text}\n\n` : ""}${ENV_BLOCK}`;
+      return { content, changed: true };
+    }
+  }
+  content.push({ type: "text", text: ENV_BLOCK });
+  return { content, changed: true };
+}
+
+/**
+ * Ensure the request carries an environment block. Upstream's free-tier quota
+ * only applies to prompts shaped like an OpenCode session; without it every
+ * request is refused with 429 FreeUsageLimitError even when the tool
+ * fingerprint is correct.
+ *
+ * @param {object} body
+ * @param {boolean} flat - true for Responses bodies (instructions), false for chat/Claude
+ * @returns {boolean} true when the body was modified
+ */
+export function ensureOpencodeEnvBlock(body, flat) {
+  if (!body || typeof body !== "object") return false;
+
+  if (flat) {
+    const current = typeof body.instructions === "string" ? body.instructions : "";
+    if (hasEnvBlock(current)) return false;
+    body.instructions = current.trim() ? `${current}\n\n${ENV_BLOCK}` : ENV_BLOCK;
+    return true;
+  }
+
+  if (typeof body.system === "string" || Array.isArray(body.system)) {
+    const { content, changed } = appendEnvToContent(body.system);
+    if (changed) body.system = content;
+    return changed;
+  }
+
+  if (!Array.isArray(body.messages)) return false;
+
+  for (const message of body.messages) {
+    if (message?.role !== "system") continue;
+    const { content, changed } = appendEnvToContent(message.content);
+    if (changed) message.content = content;
+    return changed;
+  }
+
+  body.messages = [{ role: "system", content: ENV_BLOCK }, ...body.messages];
+  return true;
+}
+
 // Verbatim from the OpenCode v2.0.26 CLI. Upstream compares description and
 // parameters, so do not reword or reformat these.
 const FINGERPRINT_TOOL_DEFINITIONS = {

@@ -76,5 +76,11 @@ jobs:
           or download \`9router-cli.tgz\` from this release and run:
           \`\`\`
           npm i -g ./9router-cli.tgz
-          \`\`\`" || true
+          \`\`\`
+
+          OpenCode free models also need Bun (the free tier only accepts Bun's TLS stack):
+          \`\`\`
+          powershell -c \"irm bun.sh/install.ps1 | iex\"
+          \`\`\`
+          Every other provider works without Bun." || true
           gh release upload "$TAG" 9router-cli.tgz --clobber
