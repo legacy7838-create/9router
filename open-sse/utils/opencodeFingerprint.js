@@ -9,6 +9,8 @@
  * different definition: it travels under an alias and the response side
  * restores the caller's original name.
  */
+import fs from "node:fs";
+import path from "node:path";
 
 /**
  * Names required by the upstream free-tier gate.
@@ -22,38 +24,68 @@
  */
 export const OPENCODE_FINGERPRINT_TOOLS = ["read"];
 
-// Free-tier quota accounting only starts once the prompt carries a complete
-// environment block; probing shows <env></env> alone is enough, while a
-// partial block (opening tag without closing) is answered with 429
-// FreeUsageLimitError. The real CLI appends this block to its system prompt.
-const ENV_BLOCK = "<env>\n</env>";
+// Free-tier quota accounting only starts once the prompt carries an
+// environment block with real contents. Upstream (v2.0.32, 2026-10-25) answers
+// an empty `<env></env>` block, or one without a `Working directory:` line,
+// with 429 FreeUsageLimitError — the same error as an exhausted quota. The real
+// CLI appends this block, filled from its own cwd, to its system prompt.
+//
+// `Working directory:` is the marker the gate keys on; the other lines mirror
+// the CLI so the block keeps looking genuine if upstream inspects more fields.
+const ENV_WORKDIR_MARKER = "Working directory:";
 
-function hasEnvBlock(text) {
-  return typeof text === "string" && text.includes("<env>") && text.includes("</env>");
+function isGitRepo(cwd) {
+  try {
+    return fs.existsSync(path.join(cwd, ".git"));
+  } catch {
+    return false;
+  }
 }
 
-function appendEnvToContent(content) {
+function buildEnvBlock() {
+  let cwd = "/";
+  try {
+    cwd = process.cwd() || "/";
+  } catch { /* cwd removed underneath us, e.g. a deleted workspace dir */ }
+  return [
+    "<env>",
+    `  ${ENV_WORKDIR_MARKER} ${cwd}`,
+    `  Workspace root folder: ${cwd}`,
+    `  Is directory a git repo: ${isGitRepo(cwd) ? "yes" : "no"}`,
+    `  Platform: ${process.platform}`,
+    "</env>",
+  ].join("\n");
+}
+
+function hasEnvBlock(text) {
+  return typeof text === "string"
+    && text.includes("<env>")
+    && text.includes("</env>")
+    && text.includes(ENV_WORKDIR_MARKER);
+}
+
+function appendEnvToContent(content, block) {
   if (typeof content === "string") {
     if (hasEnvBlock(content)) return { content, changed: false };
-    return { content: `${content.trim() ? `${content}\n\n` : ""}${ENV_BLOCK}`, changed: true };
+    return { content: `${content.trim() ? `${content}\n\n` : ""}${block}`, changed: true };
   }
   if (!Array.isArray(content)) return { content, changed: false };
   for (const part of content) {
     if (part && typeof part === "object" && typeof part.text === "string") {
       if (hasEnvBlock(part.text)) return { content, changed: false };
-      part.text = `${part.text.trim() ? `${part.text}\n\n` : ""}${ENV_BLOCK}`;
+      part.text = `${part.text.trim() ? `${part.text}\n\n` : ""}${block}`;
       return { content, changed: true };
     }
   }
-  content.push({ type: "text", text: ENV_BLOCK });
+  content.push({ type: "text", text: block });
   return { content, changed: true };
 }
 
 /**
  * Ensure the request carries an environment block. Upstream's free-tier quota
- * only applies to prompts shaped like an OpenCode session; without it every
- * request is refused with 429 FreeUsageLimitError even when the tool
- * fingerprint is correct.
+ * only applies to prompts shaped like an OpenCode session; without a filled
+ * block every request is refused with 429 FreeUsageLimitError even when the
+ * tool fingerprint is correct.
  *
  * @param {object} body
  * @param {boolean} flat - true for Responses bodies (instructions), false for chat/Claude
@@ -61,16 +93,17 @@ function appendEnvToContent(content) {
  */
 export function ensureOpencodeEnvBlock(body, flat) {
   if (!body || typeof body !== "object") return false;
+  const block = buildEnvBlock();
 
   if (flat) {
     const current = typeof body.instructions === "string" ? body.instructions : "";
     if (hasEnvBlock(current)) return false;
-    body.instructions = current.trim() ? `${current}\n\n${ENV_BLOCK}` : ENV_BLOCK;
+    body.instructions = current.trim() ? `${current}\n\n${block}` : block;
     return true;
   }
 
   if (typeof body.system === "string" || Array.isArray(body.system)) {
-    const { content, changed } = appendEnvToContent(body.system);
+    const { content, changed } = appendEnvToContent(body.system, block);
     if (changed) body.system = content;
     return changed;
   }
@@ -79,12 +112,12 @@ export function ensureOpencodeEnvBlock(body, flat) {
 
   for (const message of body.messages) {
     if (message?.role !== "system") continue;
-    const { content, changed } = appendEnvToContent(message.content);
+    const { content, changed } = appendEnvToContent(message.content, block);
     if (changed) message.content = content;
     return changed;
   }
 
-  body.messages = [{ role: "system", content: ENV_BLOCK }, ...body.messages];
+  body.messages = [{ role: "system", content: block }, ...body.messages];
   return true;
 }
 

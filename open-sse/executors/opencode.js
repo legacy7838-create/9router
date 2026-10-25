@@ -7,7 +7,7 @@ import { injectReasoningContent } from "../utils/reasoningContentInjector.js";
 import { resolveSessionId } from "../utils/sessionManager.js";
 import { isMuseSparkModel } from "../providers/models/helpers.js";
 import { applyFingerprintTools, ensureOpencodeEnvBlock } from "../utils/opencodeFingerprint.js";
-import { opencodeBunFetch, resolveBunProxyUrl } from "../utils/opencodeBunTransport.js";
+import { opencodeBunFetchWithRotation, resolveBunProxyCandidates } from "../utils/opencodeBunTransport.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { ANTHROPIC_API_VERSION } from "../providers/shared.js";
 import {
@@ -404,16 +404,17 @@ export class OpenCodeExecutor extends BaseExecutor {
 
   // Free-tier requests are only accepted from the Bun/CLI TLS stack. Route them
   // through Bun (in-process when the server already runs on Bun, otherwise a
-  // local Bun sidecar) instead of Node/undici, curl-style clients or relays.
+  // local Bun sidecar). The free quota is metered per source IP, so a 429 walks
+  // the configured proxy list one by one before the error reaches the client.
   async fetchResponse(url, init, proxyOptions) {
     if (process.env.VITEST) return proxyAwareFetch(url, init, proxyOptions);
-    const proxyUrl = resolveBunProxyUrl(url, proxyOptions);
+    const candidates = resolveBunProxyCandidates(url, proxyOptions);
     try {
-      return await opencodeBunFetch(url, init, proxyUrl);
+      return await opencodeBunFetchWithRotation(url, init, candidates);
     } catch (error) {
-      // A configured proxy is a privacy contract: never fall back to the direct
-      // IP. Without one, keep the lane usable on hosts where Bun is missing.
-      if (proxyUrl) throw error;
+      // A configured proxy list is a privacy contract: never fall back to the
+      // direct IP. Without one, keep the lane usable on hosts where Bun is missing.
+      if (!candidates.includes(null)) throw error;
       console.warn(`[opencode] Bun transport unavailable (${error.message}); falling back to native fetch`);
       return proxyAwareFetch(url, init, proxyOptions);
     }
