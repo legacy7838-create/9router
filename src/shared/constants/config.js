@@ -13,6 +13,22 @@ export const GITHUB_CONFIG = {
   donateUrl: "https://9router.com/api/donate",
 };
 
+// GitHub Actions relay: container on a runner, exposed via a Cloudflare quick tunnel.
+// Jobs cap at 6h, so the workflow re-runs every 5h and the URL poller tracks the new tunnel.
+export const GITHUB_RELAY_CONFIG = {
+  apiBase: "https://api.github.com",
+  stateBranchPrefix: "relay-state-",
+  workflowPath: ".github/workflows/relay.yml",
+  relayPort: 8080,
+  maxLegs: 10,
+  pollIntervalMs: 60000,         // refresh scheduler tick (URL pickup ≤1 min)
+  deployPollMs: 90000,           // optional blocking wait after a deploy
+  deployPollStepMs: 5000,
+  jobSeconds: 19200,             // 5h20m keepalive, so the next queued run takes over
+  healthPath: "/__relay_health",
+  cron: "0 */5 * * *",
+};
+
 // Updater configuration
 export const UPDATER_CONFIG = {
   npmPackageName: "9router",

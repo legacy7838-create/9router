@@ -408,7 +408,10 @@ export class OpenCodeExecutor extends BaseExecutor {
   // the configured proxy list one by one before the error reaches the client.
   async fetchResponse(url, init, proxyOptions) {
     if (process.env.VITEST) return proxyAwareFetch(url, init, proxyOptions);
-    const candidates = resolveBunProxyCandidates(url, proxyOptions);
+    // autoPool: the built-in free lane has no per-connection proxy option, so a
+    // configured lane pool (OC_PROXY_LIST / warpgen / user WARP pool) is used
+    // before falling back to the direct IP.
+    const candidates = resolveBunProxyCandidates(url, { ...proxyOptions, autoPool: true });
     try {
       return await opencodeBunFetchWithRotation(url, init, candidates);
     } catch (error) {

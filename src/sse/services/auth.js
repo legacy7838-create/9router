@@ -1,5 +1,6 @@
 import { getProviderConnections, validateApiKey, updateProviderConnection, getSettings, getProxyPools } from "@/lib/localDb";
 import { resolveConnectionProxyConfig, pickProxyPoolId } from "@/lib/network/connectionProxy";
+import { isRelayType } from "@/lib/network/relayTypes";
 import { formatRetryAfter, checkFallbackError, isModelLockActive, buildModelLockUpdate, getEarliestModelLockUntil } from "open-sse/services/accountFallback.js";
 import { MAX_RATE_LIMIT_COOLDOWN_MS } from "open-sse/config/errorConfig.js";
 import { resolveProviderId, FREE_PROVIDERS } from "@/shared/constants/providers.js";
@@ -48,12 +49,21 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       const settings = await getSettings();
       const override = (settings.providerStrategies || {})[providerId] || {};
       const strategy = override.rotateStrategy || "none";
+      const allPools = await getProxyPools({ isActive: true });
+      const usablePools = allPools.filter((p) => p.proxyUrl);
       let pickedId = override.proxyPoolId || null;
       if (strategy !== "none") {
-        const allPools = await getProxyPools({ isActive: true });
-        const poolIds = allPools.filter(p => p.proxyUrl).map(p => p.id);
-        pickedId = pickProxyPoolId(poolIds, strategy, providerId);
+        pickedId = pickProxyPoolId(usablePools.map((p) => p.id), strategy, providerId);
       }
+      // With rotation enabled, a 429 on one relay leg should fall through to the
+      // next leg instead of failing the request (shared runner IPs can be out of
+      // free quota). A fixed pool choice keeps its single-egress contract.
+      const relayFallbacks = strategy !== "none"
+        ? usablePools
+            .filter((pool) => isRelayType(pool.type) && pool.id !== pickedId)
+            .map((pool) => pool.proxyUrl)
+            .slice(0, 16)
+        : [];
       const resolvedProxy = await resolveConnectionProxyConfig({ proxyPoolId: pickedId || "" });
       return {
         id: "noauth",
@@ -66,6 +76,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
           connectionNoProxy: resolvedProxy.connectionNoProxy,
           connectionProxyPoolId: resolvedProxy.proxyPoolId || null,
           vercelRelayUrl: resolvedProxy.vercelRelayUrl || "",
+          vercelRelayFallbacks: relayFallbacks,
         },
       };
     }

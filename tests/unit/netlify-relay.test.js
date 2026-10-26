@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("@/models", () => ({
@@ -98,6 +100,62 @@ describe("netlifyRelay helpers", () => {
     expect(Buffer.from(bin.body, "base64").equals(Buffer.from(binBytes))).toBe(true);
     expect(bin.isBase64Encoded).toBe(true);
     expect(() => JSON.stringify(bin)).not.toThrow();
+  });
+
+  it("strips caller-IP headers before forwarding to the target", async () => {
+    let forwarded = null;
+    const fakeFetch = async (_url, init) => {
+      forwarded = init.headers;
+      return {
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        arrayBuffer: async () => new TextEncoder().encode("{}").buffer.slice(0),
+      };
+    };
+    const sandboxExports = {};
+    new Function("exports", "fetch", "Buffer", net.NETLIFY_RELAY_FUNCTION_CODE)(
+      sandboxExports, fakeFetch, Buffer
+    );
+    await sandboxExports.handler({
+      headers: {
+        "x-relay-target": "https://opencode.ai",
+        "x-relay-path": "/inference/v1/chat/completions",
+        Authorization: "Bearer public",
+        "X-Forwarded-For": "1.2.3.4",
+        Forwarded: "for=1.2.3.4",
+        "CF-Connecting-IP": "1.2.3.4",
+        "X-Nf-Client-Connection-Ip": "1.2.3.4",
+        "X-Real-IP": "1.2.3.4",
+        "X-Vercel-Forwarded-For": "1.2.3.4",
+      },
+      httpMethod: "POST",
+      body: "x",
+    });
+
+    const keys = Object.keys(forwarded).map((key) => key.toLowerCase());
+    for (const banned of [
+      "x-relay-target", "x-relay-path", "host", "x-forwarded-for", "forwarded",
+      "cf-connecting-ip", "x-nf-client-connection-ip", "x-real-ip", "x-vercel-forwarded-for",
+    ]) {
+      expect(keys).not.toContain(banned);
+    }
+    expect(keys).toContain("authorization");
+  });
+
+  it("ships the same IP-header stripping in the Supabase relay function", () => {
+    const source = fs.readFileSync(
+      path.join(process.cwd(), "supabase/functions/relay/index.ts"),
+      "utf8",
+    );
+    const lower = source.toLowerCase();
+    for (const header of [
+      "x-forwarded-for", "forwarded", "x-real-ip", "true-client-ip",
+      "cf-connecting-ip", "x-nf-client-connection-ip", "x-vercel-forwarded-for",
+      "x-relay-target", "x-relay-path",
+    ]) {
+      expect(lower).toContain(`"${header}"`);
+    }
+    expect(source).toContain("STRIP_HEADERS.has");
   });
 
   it("builds the relay URL from the site URL", () => {

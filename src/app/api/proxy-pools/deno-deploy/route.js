@@ -3,7 +3,23 @@ import { createProxyPool } from "@/models";
 
 const DENO_V2_API = "https://api.deno.com/v2";
 
-const DENO_RELAY_CODE = `Deno.serve(async (request) => {
+const DENO_RELAY_CODE = `// Client-IP headers injected by the platform edge must not be forwarded:
+// the target would attribute the request (and its rate-limit/quota) to the
+// caller's real IP instead of this relay's egress.
+const STRIP_HEADERS = new Set([
+  "host", "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
+  "te", "trailer", "transfer-encoding", "upgrade", "content-length",
+  "x-relay-target", "x-relay-path",
+  "x-forwarded-for", "x-forwarded-host", "x-forwarded-port", "x-forwarded-proto",
+  "x-forwarded-server", "forwarded", "x-real-ip", "true-client-ip",
+  "x-client-ip", "x-cluster-client-ip", "fastly-client-ip",
+  "cf-connecting-ip", "cf-ipcountry", "cf-ray", "cf-visitor", "cdn-loop",
+  "x-nf-client-connection-ip", "x-nf-request-id", "x-nf-geo",
+  "x-vercel-forwarded-for", "x-vercel-proxied-for",
+  "x-azure-clientip", "x-azure-socketip", "x-amz-cf-id",
+]);
+
+Deno.serve(async (request) => {
   const target = request.headers.get("x-relay-target");
   const relayPath = request.headers.get("x-relay-path") || "/";
 
@@ -15,10 +31,10 @@ const DENO_RELAY_CODE = `Deno.serve(async (request) => {
   }
 
   const targetUrl = target.replace(/\\/$/, "") + relayPath;
-  const newHeaders = new Headers(request.headers);
-  newHeaders.delete("x-relay-target");
-  newHeaders.delete("x-relay-path");
-  newHeaders.delete("host");
+  const newHeaders = new Headers();
+  for (const [k, v] of request.headers) {
+    if (!STRIP_HEADERS.has(k.toLowerCase())) newHeaders.set(k, v);
+  }
 
   const init = {
     method: request.method,

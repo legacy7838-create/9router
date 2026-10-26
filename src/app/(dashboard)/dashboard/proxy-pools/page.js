@@ -36,6 +36,7 @@ export default function ProxyPoolsPage() {
   const [showCloudflareModal, setShowCloudflareModal] = useState(false);
   const [showDenoModal, setShowDenoModal] = useState(false);
   const [showNetlifyModal, setShowNetlifyModal] = useState(false);
+  const [showGithubModal, setShowGithubModal] = useState(false);
   const [showRelayMenu, setShowRelayMenu] = useState(false);
   const [editingProxyPool, setEditingProxyPool] = useState(null);
   const [formData, setFormData] = useState(normalizeFormData());
@@ -44,6 +45,7 @@ export default function ProxyPoolsPage() {
   const [cloudflareForm, setCloudflareForm] = useState({ accountId: "", apiToken: "", projectName: "cloudflare-relay" });
   const [denoForm, setDenoForm] = useState({ denoToken: "", orgDomain: "", projectName: "" });
   const [netlifyForm, setNetlifyForm] = useState({ netlifyToken: "", projectName: "netlify-relay" });
+  const [githubForm, setGithubForm] = useState({ pat: "", owner: "", repo: "9router-relay", legs: 10 });
   const [saving, setSaving] = useState(false);
   const [importing, setImporting] = useState(false);
   const [deploying, setDeploying] = useState(false);
@@ -384,6 +386,16 @@ export default function ProxyPoolsPage() {
     setShowNetlifyModal(false);
   };
 
+  const openGithubModal = () => {
+    setGithubForm({ pat: "", owner: "", repo: "9router-relay", legs: 10 });
+    setShowGithubModal(true);
+  };
+
+  const closeGithubModal = () => {
+    if (deploying) return;
+    setShowGithubModal(false);
+  };
+
   const handleVercelDeploy = async () => {
     if (!vercelForm.vercelToken.trim()) return;
     setDeploying(true);
@@ -478,6 +490,41 @@ export default function ProxyPoolsPage() {
       }
     } catch (error) {
       console.log("Error deploying Netlify relay:", error);
+      notify.error("Deploy failed");
+    } finally {
+      setDeploying(false);
+    }
+  };
+
+  const handleGithubDeploy = async () => {
+    if (!githubForm.pat.trim() || !githubForm.owner.trim() || !githubForm.repo.trim()) return;
+    setDeploying(true);
+    try {
+      const res = await fetch("/api/proxy-pools/github-deploy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pat: githubForm.pat.trim(),
+          owner: githubForm.owner.trim(),
+          repo: githubForm.repo.trim(),
+          legs: Number(githubForm.legs) || 1,
+          savePat: true,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        await fetchProxyPools();
+        closeGithubModal();
+        const pending = data.pendingLegs?.length ? ` (${data.pendingLegs.length} leg(s) starting)` : "";
+        notify.success(`Deployed ${data.repoFullName}${pending}`);
+        // Tunnel URLs are published ~30s after dispatch; refresh so pending rows fill in.
+        setTimeout(() => { fetchProxyPools(); }, 30000);
+        setTimeout(() => { fetchProxyPools(); }, 75000);
+      } else {
+        notify.error(data.error || "Deploy failed");
+      }
+    } catch (error) {
+      console.log("Error deploying GitHub relay:", error);
       notify.error("Deploy failed");
     } finally {
       setDeploying(false);
@@ -672,6 +719,16 @@ export default function ProxyPoolsPage() {
                   <span className="material-symbols-outlined text-[20px] text-teal-500">deployed_code</span>
                   Netlify Relay
                 </button>
+                <button
+                  onClick={() => {
+                    openGithubModal();
+                    setShowRelayMenu(false);
+                  }}
+                  className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-text-main transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+                >
+                  <span className="material-symbols-outlined text-[20px] text-zinc-500">hub</span>
+                  GitHub Relay
+                </button>
               </div>
             )}
           </div>
@@ -774,6 +831,9 @@ export default function ProxyPoolsPage() {
                     )}
                     {pool.type === "netlify" && (
                       <Badge variant="default" size="sm">netlify relay</Badge>
+                    )}
+                    {pool.type === "github" && (
+                      <Badge variant="default" size="sm">github relay{pool.leg ? ` · leg ${pool.leg}` : ""}</Badge>
                     )}
                     <Badge variant="default" size="sm">
                       {pool.boundConnectionCount || 0} bound
@@ -1087,6 +1147,75 @@ export default function ProxyPoolsPage() {
               {deploying ? "Deploying... (may take ~1 min)" : "Deploy"}
             </Button>
             <Button fullWidth variant="ghost" onClick={closeNetlifyModal} disabled={deploying}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={showGithubModal}
+        title="Deploy GitHub Relay"
+        onClose={closeGithubModal}
+      >
+        <div className="flex flex-col gap-4">
+          <div className="rounded-lg bg-zinc-500/5 border border-zinc-500/10 p-3 flex flex-col gap-1.5">
+            <p className="text-sm text-text-main font-medium">What is GitHub Relay?</p>
+            <p className="text-xs text-text-muted">
+              Creates a public GitHub repo whose workflow runs relay containers on GitHub-hosted runners,
+              exposed through Cloudflare quick tunnels. Each leg is its own runner, so each gets its own egress IP.
+            </p>
+            <ul className="text-xs text-text-muted list-disc pl-4 space-y-0.5">
+              <li>Jobs last ~5h and re-run on a 5-hour schedule; tunnel URLs rotate and are refreshed automatically</li>
+              <li>Pool rows show <b>pending</b> for ~30s after deploy until the first tunnel URL is published</li>
+              <li>The tunnel URL is public and unauthenticated — anyone who finds it can relay through it</li>
+              <li>Running proxy infrastructure on Actions is outside GitHub&apos;s intended CI use</li>
+              <li>Requires a PAT with <code>repo</code> and <code>workflow</code> scopes (classic), or Contents/Workflows/Actions/Administration write (fine-grained)</li>
+            </ul>
+          </div>
+          <Input
+            label="GitHub Personal Access Token"
+            value={githubForm.pat}
+            onChange={(e) => setGithubForm((prev) => ({ ...prev, pat: e.target.value }))}
+            placeholder="ghp_xxxxxxxxxxxxxxxx"
+            hint={<>
+              Stored locally so tunnel URLs can be refreshed after each restart.{" "}
+              <a href="https://github.com/settings/tokens" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">Get token →</a>
+            </>}
+            type="password"
+          />
+          <Input
+            label="Owner / Organization"
+            value={githubForm.owner}
+            onChange={(e) => setGithubForm((prev) => ({ ...prev, owner: e.target.value }))}
+            placeholder="your-github-username"
+            hint="The repo is created here if it does not exist."
+          />
+          <Input
+            label="Repository Name"
+            value={githubForm.repo}
+            onChange={(e) => setGithubForm((prev) => ({ ...prev, repo: e.target.value }))}
+            placeholder="9router-relay"
+            hint="Public repo. Existing relay files are overwritten on redeploy."
+          />
+          <Input
+            label="Legs (parallel runners)"
+            type="number"
+            min={1}
+            max={10}
+            value={githubForm.legs}
+            onChange={(e) => setGithubForm((prev) => ({ ...prev, legs: e.target.value }))}
+            hint="1–10. Each leg is a separate job, container, tunnel and egress IP."
+          />
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <Button
+              fullWidth
+              onClick={handleGithubDeploy}
+              disabled={!githubForm.pat.trim() || !githubForm.owner.trim() || !githubForm.repo.trim() || deploying}
+            >
+              {deploying ? "Deploying..." : "Deploy"}
+            </Button>
+            <Button fullWidth variant="ghost" onClick={closeGithubModal} disabled={deploying}>
               Cancel
             </Button>
           </div>

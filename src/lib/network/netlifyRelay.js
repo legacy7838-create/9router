@@ -26,7 +26,23 @@ export const NETLIFY_FUNCTION_PATH = "/.netlify/functions/relay";
 // cannot-unmarshal-object-into-Go-struct-field (502).
 // Response shape mirrors the Vercel/Cloudflare/Deno relays: relay headers
 // stripped, status/body passed through.
-export const NETLIFY_RELAY_FUNCTION_CODE = `exports.handler = async (event) => {
+export const NETLIFY_RELAY_FUNCTION_CODE = `const STRIP_HEADERS = new Set([
+  "host", "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
+  "te", "trailer", "transfer-encoding", "upgrade", "content-length",
+  "x-relay-target", "x-relay-path",
+  // Client-IP headers injected by hosting edges. Forwarding them makes the
+  // target attribute the request (and its rate-limit/quota) to the caller's
+  // real IP instead of this relay's egress, which defeats the relay.
+  "x-forwarded-for", "x-forwarded-host", "x-forwarded-port", "x-forwarded-proto",
+  "x-forwarded-server", "forwarded", "x-real-ip", "true-client-ip",
+  "x-client-ip", "x-cluster-client-ip", "fastly-client-ip",
+  "cf-connecting-ip", "cf-ipcountry", "cf-ray", "cf-visitor", "cdn-loop",
+  "x-nf-client-connection-ip", "x-nf-request-id", "x-nf-geo",
+  "x-vercel-forwarded-for", "x-vercel-proxied-for",
+  "x-azure-clientip", "x-azure-socketip", "x-amz-cf-id",
+]);
+
+exports.handler = async (event) => {
   const headers = {};
   for (const [k, v] of Object.entries(event.headers || {})) {
     headers[k.toLowerCase()] = v;
@@ -44,12 +60,9 @@ export const NETLIFY_RELAY_FUNCTION_CODE = `exports.handler = async (event) => {
   }
 
   const targetUrl = target.replace(/\\/$/, "") + relayPath;
-  const forwardHeaders = { ...event.headers };
-  for (const k of Object.keys(forwardHeaders)) {
-    const lower = k.toLowerCase();
-    if (lower === "x-relay-target" || lower === "x-relay-path" || lower === "host") {
-      delete forwardHeaders[k];
-    }
+  const forwardHeaders = {};
+  for (const [k, v] of Object.entries(event.headers || {})) {
+    if (!STRIP_HEADERS.has(k.toLowerCase())) forwardHeaders[k] = v;
   }
 
   try {

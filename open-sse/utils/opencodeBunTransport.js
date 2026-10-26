@@ -5,6 +5,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { dbg } from "./debugLog.js";
+import { proxyAwareFetch } from "./proxyFetch.js";
 
 /**
  * OpenCode free-tier transport.
@@ -303,17 +304,23 @@ function ensureMaintenance() {
 }
 
 /**
- * Fetch an upstream URL through Bun's TLS stack.
+ * Fetch an upstream URL through Bun's TLS stack, or through the connection's
+ * Vercel relay when one is selected.
  *
  * @param {string} url
  * @param {RequestInit & { body?: string }} init
- * @param {string|null} proxyUrl - explicit proxy; Bun also honours proxy env vars
+ * @param {string|{relay:string}|null} egress - proxy URL, relay marker, or null for direct
  */
-export async function opencodeBunFetch(url, init = {}, proxyUrl = null) {
+export async function opencodeBunFetch(url, init = {}, egress = null) {
   ensureMaintenance();
+  if (egress && typeof egress === "object" && egress.relay) {
+    // The relay forwards the request itself, so its own TLS stack is what
+    // upstream sees; keep the same headers/body the Bun lane would send.
+    return proxyAwareFetch(url, init, { vercelRelayUrl: egress.relay });
+  }
   if (isBunRuntime()) {
     const options = { ...init };
-    if (proxyUrl) options.proxy = proxyUrl;
+    if (egress) options.proxy = egress;
     return fetch(url, options);
   }
 
@@ -327,7 +334,7 @@ export async function opencodeBunFetch(url, init = {}, proxyUrl = null) {
         method: init.method || "POST",
         headers: normalizeHeaders(init.headers),
         body: typeof init.body === "string" ? init.body : null,
-        proxy: proxyUrl || null,
+        proxy: typeof egress === "string" ? egress : null,
       }),
       signal: init.signal,
     });
@@ -412,10 +419,21 @@ function readProxyFile(file) {
   }
 }
 
+// A user-owned pool path next to the app data dir. The system pool file lives
+// under /var/lib (root-owned), so hosts running without root use this one.
+const USER_PROXY_FILE = path.join(os.homedir(), ".9router", "warp-pool", "proxies.txt");
+
+function proxyPoolFiles() {
+  // An explicit OC_PROXY_FILE is the operator's choice; otherwise read both the
+  // system pool and the no-root WARP pool (missing files simply contribute none).
+  if (process.env.OC_PROXY_FILE) return [process.env.OC_PROXY_FILE];
+  return ["/var/lib/warpgen/proxies.txt", USER_PROXY_FILE];
+}
+
 function readProxyList() {
   const entries = [];
   if (process.env.OC_PROXY_LIST) entries.push(...process.env.OC_PROXY_LIST.split(/[\s,]+/));
-  entries.push(...readProxyFile(process.env.OC_PROXY_FILE || "/var/lib/warpgen/proxies.txt"));
+  for (const file of proxyPoolFiles()) entries.push(...readProxyFile(file));
   return entries.map(normalizeProxyEntry).filter(Boolean);
 }
 
@@ -424,24 +442,50 @@ function proxyRequested(proxyOptions) {
 }
 
 /**
- * Proxy candidates for one request, in attempt order.
- * @returns {(string|null)[]} `null` represents a direct connection
+ * Egress candidates for one request, in attempt order. A Vercel relay is an
+ * egress in its own right: the OpenCode lane must forward through it (like the
+ * generic fetch path does) instead of silently falling back to the direct IP.
+ *
+ * @returns {(string|{relay:string}|null)[]} `null` represents a direct connection
  */
 export function resolveBunProxyCandidates(targetUrl, proxyOptions) {
-  // The connection's proxy option is the contract: off means direct, and a
-  // leftover OC_PROXY_LIST / warpgen file must not silently route through an
-  // egress the operator just disabled.
-  if (!proxyRequested(proxyOptions)) return [null];
+  const candidates = [];
 
-  const configuredRaw = String(proxyOptions?.url ?? proxyOptions?.connectionProxyUrl ?? "").trim();
-  if (configuredRaw && bypassByNoProxy(targetUrl, proxyOptions?.noProxy ?? proxyOptions?.connectionNoProxy)) {
-    return [null];
+  const relay = String(proxyOptions?.vercelRelayUrl ?? "").trim();
+  if (relay) candidates.push({ relay });
+
+  // Extra relay legs from the same rotation group. A 429 from one leg (shared
+  // runner IP out of free quota) falls through to the next instead of failing.
+  for (const fallback of proxyOptions?.vercelRelayFallbacks || []) {
+    const url = String(fallback || "").trim();
+    if (url) candidates.push({ relay: url });
   }
 
-  const configured = resolveBunProxyUrl(targetUrl, proxyOptions);
-  const pool = [...new Set(readProxyList())].filter((proxy) => proxy !== configured);
-  if (configured) return [configured, ...pool];
-  return pool.length ? pool : [null];
+  let configured = null;
+  let usePool = false;
+  if (proxyRequested(proxyOptions)) {
+    const configuredRaw = String(proxyOptions?.url ?? proxyOptions?.connectionProxyUrl ?? "").trim();
+    const bypassed = configuredRaw
+      && bypassByNoProxy(targetUrl, proxyOptions?.noProxy ?? proxyOptions?.connectionNoProxy);
+    if (!bypassed) {
+      configured = resolveBunProxyUrl(targetUrl, proxyOptions);
+      if (configured) candidates.push(configured);
+      usePool = true;
+    }
+  } else if (proxyOptions?.autoPool === true) {
+    // The built-in free lane has no per-connection proxy option. Fall back to
+    // the operator's lane pool (e.g. the user-owned WARP pool) instead of
+    // leaving over the direct IP, which is usually already quota-exhausted.
+    usePool = true;
+  }
+
+  if (usePool) {
+    const pool = [...new Set(readProxyList())].filter((proxy) => proxy !== configured);
+    candidates.push(...pool);
+  }
+
+  if (!candidates.length) return [null];
+  return candidates.filter((entry, index) => candidates.findIndex((other) => proxyKey(other) === proxyKey(entry)) === index);
 }
 
 function retryAfterMs(headers) {
@@ -453,8 +497,9 @@ function retryAfterMs(headers) {
   return Number.isFinite(at) ? Math.max(0, at - Date.now()) : 0;
 }
 
-function proxyKey(proxyUrl) {
-  return proxyUrl || "direct";
+function proxyKey(egress) {
+  if (egress && typeof egress === "object") return egress.relay ? `relay:${egress.relay}` : "direct";
+  return egress || "direct";
 }
 
 // Egress state is keyed per proxy and bounded: a pool file that keeps churning
@@ -471,6 +516,11 @@ function rememberProxyState(map, key, value) {
 function transientRetryAttempts() {
   const raw = Number(process.env.OC_TRANSIENT_RETRY_ATTEMPTS);
   return Number.isFinite(raw) && raw >= 0 ? Math.min(5, Math.floor(raw)) : 2;
+}
+
+function quotaCooldownCapMs() {
+  const raw = Number(process.env.OC_QUOTA_COOLDOWN_MS);
+  return Number.isFinite(raw) && raw >= 0 ? raw : 60_000;
 }
 
 function transientRetryDelayMs(round) {
@@ -529,14 +579,15 @@ function exhaustedResponse(status, headers, text) {
 
 /**
  * Fetch, walking the proxy list on 429 responses (and on connection errors).
- * A 429 that carries `retry-after` means the egress is out of free quota, so it
- * is parked for that window and later requests skip it. A 429 without
+ * A 429 that carries `retry-after` means the egress is out of free quota: it is
+ * parked for a capped window (rotating proxies get a fresh source IP well
+ * before the daily reset) and later requests skip it. A 429 without
  * `retry-after` is a transient burst throttle: it moves to the next egress, is
  * retried a couple of times with jittered backoff, and never parks anything, so
  * a burst neither fails the call nor leaves the rotation serving a cached
  * failure for the next 15 s.
  *
- * @param {(string|null)[]} candidates
+ * @param {(string|{relay:string}|null)[]} candidates
  * @param {Function} [fetchImpl] injectable for tests
  */
 export async function opencodeBunFetchWithRotation(url, init = {}, candidates = [null], fetchImpl = opencodeBunFetch) {
@@ -591,7 +642,12 @@ export async function opencodeBunFetchWithRotation(url, init = {}, candidates = 
           continue;
         }
         const waitMs = response.status === 429 ? retryAfterMs(headers) : 0;
-        const cooldownMs = waitMs > 0 ? waitMs : 15_000;
+        // Relay egress has a fixed source IP for the whole job, so the full
+        // retry-after applies; rotating proxies get a fresh IP much sooner.
+        const isRelay = proxy && typeof proxy === "object" && !!proxy.relay;
+        const cooldownMs = waitMs > 0
+          ? (isRelay ? waitMs : Math.min(waitMs, quotaCooldownCapMs()))
+          : 15_000;
         rememberProxyState(PROXY_COOLDOWN_UNTIL, proxyKey(proxy), Date.now() + cooldownMs);
         rememberProxyState(PROXY_LAST_ERROR, proxyKey(proxy), { status: response.status, headers, text });
         dbg("FETCH", `OPENCODE ${response.status} on ${proxyKey(proxy)}; trying next egress`);

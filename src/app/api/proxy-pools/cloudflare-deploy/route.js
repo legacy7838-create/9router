@@ -3,6 +3,22 @@ import { createProxyPool } from "@/models";
 
 // Relay worker source code deployed to Cloudflare
 const RELAY_WORKER_CODE = `
+// Client-IP headers injected by the platform edge must not be forwarded:
+// the target would attribute the request (and its rate-limit/quota) to the
+// caller's real IP instead of this Worker's egress.
+const STRIP_HEADERS = new Set([
+  "host", "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
+  "te", "trailer", "transfer-encoding", "upgrade", "content-length",
+  "x-relay-target", "x-relay-path",
+  "x-forwarded-for", "x-forwarded-host", "x-forwarded-port", "x-forwarded-proto",
+  "x-forwarded-server", "forwarded", "x-real-ip", "true-client-ip",
+  "x-client-ip", "x-cluster-client-ip", "fastly-client-ip",
+  "cf-connecting-ip", "cf-ipcountry", "cf-ray", "cf-visitor", "cdn-loop",
+  "x-nf-client-connection-ip", "x-nf-request-id", "x-nf-geo",
+  "x-vercel-forwarded-for", "x-vercel-proxied-for",
+  "x-azure-clientip", "x-azure-socketip", "x-amz-cf-id",
+]);
+
 export default {
   async fetch(request, env, ctx) {
     const target = request.headers.get("x-relay-target");
@@ -16,19 +32,20 @@ export default {
     }
 
     const targetUrl = target.replace(/\\/$/, "") + relayPath;
+    const outHeaders = new Headers();
+    for (const [key, value] of request.headers) {
+      if (!STRIP_HEADERS.has(key.toLowerCase())) outHeaders.set(key, value);
+    }
+
     const newRequestInit = {
       method: request.method,
-      headers: new Headers(request.headers),
+      headers: outHeaders,
     };
 
     if (request.method !== "GET" && request.method !== "HEAD") {
       newRequestInit.body = request.body;
       newRequestInit.duplex = "half";
     }
-
-    newRequestInit.headers.delete("x-relay-target");
-    newRequestInit.headers.delete("x-relay-path");
-    newRequestInit.headers.delete("host");
 
     try {
       const response = await fetch(targetUrl, newRequestInit);

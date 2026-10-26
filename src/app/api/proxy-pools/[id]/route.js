@@ -5,6 +5,7 @@ import {
   getProxyPoolById,
   updateProxyPool,
 } from "@/models";
+import { RELAY_TYPES } from "@/lib/network/relayTypes";
 
 function normalizeProxyPoolUpdate(body = {}) {
   const updates = {};
@@ -38,7 +39,7 @@ function normalizeProxyPoolUpdate(body = {}) {
   }
 
   if (Object.prototype.hasOwnProperty.call(body, "type")) {
-    const validTypes = ["http", "vercel", "cloudflare", "deno", "netlify"];
+    const validTypes = ["http", ...RELAY_TYPES];
     updates.type = validTypes.includes(body?.type) ? body.type : "http";
   }
 

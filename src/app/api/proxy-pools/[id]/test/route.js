@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getProxyPoolById, updateProxyPool } from "@/models";
 import { testProxyUrl } from "@/lib/network/proxyTest";
+import { isRelayType } from "@/lib/network/relayTypes";
 import { fetch as undiciFetch } from "undici";
 
 async function testVercelRelay(relayUrl, timeoutMs = 10000) {
@@ -43,7 +44,7 @@ export async function POST(request, { params }) {
       return NextResponse.json({ error: "Proxy pool not found" }, { status: 404 });
     }
 
-    const result = proxyPool.type === "vercel" || proxyPool.type === "cloudflare" || proxyPool.type === "deno" || proxyPool.type === "netlify"
+    const result = isRelayType(proxyPool.type)
       ? await testVercelRelay(proxyPool.proxyUrl)
       : await testProxyUrl({ proxyUrl: proxyPool.proxyUrl });
     const now = new Date().toISOString();

@@ -73,6 +73,12 @@ export async function createProxyPool(data) {
     createdAt: now,
     updatedAt: now,
   };
+
+  // Relay metadata (github): the URL-rotation poller reads these back.
+  for (const key of ["repoFullName", "leg", "stateBranch", "workflowPath", "defaultBranch", "deployStatus"]) {
+    if (data[key] !== undefined) pool[key] = data[key];
+  }
+
   upsert(db, pool);
   return pool;
 }

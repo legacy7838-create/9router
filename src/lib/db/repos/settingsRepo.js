@@ -30,6 +30,7 @@ const DEFAULT_SETTINGS = {
   oidcIssuerUrl: "",
   oidcClientId: "",
   oidcClientSecret: "",
+  githubRelayPat: "",
   oidcScopes: "openid profile email",
   oidcLoginLabel: "Sign in with OIDC",
   samlEntryPoint: "",

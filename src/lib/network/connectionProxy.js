@@ -1,4 +1,5 @@
 import { getProxyPoolById } from "@/models";
+import { isRelayType } from "@/lib/network/relayTypes";
 
 // Safely normalize any value into a trimmed string.
 function normalizeString(value) {
@@ -103,10 +104,10 @@ export async function resolveConnectionProxyConfig(
 
       if (isValidPool) {
         /**
-         * Vercel/Cloudflare/Deno/Netlify relay proxies use base URL rewriting
-         * instead of HTTP_PROXY environment variables.
+         * Relay proxies (Vercel/Cloudflare/Deno/Netlify/GitHub) use base URL
+         * rewriting instead of HTTP_PROXY environment variables.
          */
-        if (proxyPool.type === "vercel" || proxyPool.type === "cloudflare" || proxyPool.type === "deno" || proxyPool.type === "netlify") {
+        if (isRelayType(proxyPool.type)) {
           return {
             source: proxyPool.type,
 

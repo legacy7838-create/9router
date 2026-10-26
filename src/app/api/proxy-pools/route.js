@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createProxyPool, getProviderConnections, getProxyPools } from "@/models";
+import { RELAY_TYPES } from "@/lib/network/relayTypes";
 
 function toBoolean(value) {
   if (value === "true") return true;
@@ -7,7 +8,7 @@ function toBoolean(value) {
   return undefined;
 }
 
-const VALID_PROXY_TYPES = ["http", "vercel", "cloudflare", "deno", "netlify"];
+const VALID_PROXY_TYPES = ["http", ...RELAY_TYPES];
 
 function normalizeProxyPoolInput(body = {}) {
   const name = typeof body?.name === "string" ? body.name.trim() : "";

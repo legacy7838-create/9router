@@ -86,6 +86,13 @@ async function runHeavyStartup() {
       .catch((e) => console.log("[AutoPing] scheduler start failed:", e.message));
   }
 
+  // Keep GitHub relay pools pointing at their current quick-tunnel URLs.
+  if (String(settings.githubRelayPat || "").trim()) {
+    import("@/shared/services/githubRelayRefresh")
+      .then(({ startGithubRelayRefresh }) => startGithubRelayRefresh())
+      .catch((e) => console.log("[GithubRelay] scheduler start failed:", e.message));
+  }
+
   // Proactive OAuth token refresh (e.g. grok-cli ~6h TTL). Module is idempotent
   // and also started from custom-server.js when that entry is used.
   import("@/sse/services/backgroundTokenRefresh.js")

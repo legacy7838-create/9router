@@ -8,6 +8,22 @@ const VERCEL_API = "https://api.vercel.com";
 const RELAY_FUNCTION_CODE = `
 export const config = { runtime: "edge" };
 
+// Client-IP headers injected by the platform edge must not be forwarded:
+// the target would attribute the request (and its rate-limit/quota) to the
+// caller's real IP instead of this relay's egress.
+const STRIP_HEADERS = new Set([
+  "host", "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
+  "te", "trailer", "transfer-encoding", "upgrade", "content-length",
+  "x-relay-target", "x-relay-path",
+  "x-forwarded-for", "x-forwarded-host", "x-forwarded-port", "x-forwarded-proto",
+  "x-forwarded-server", "forwarded", "x-real-ip", "true-client-ip",
+  "x-client-ip", "x-cluster-client-ip", "fastly-client-ip",
+  "cf-connecting-ip", "cf-ipcountry", "cf-ray", "cf-visitor", "cdn-loop",
+  "x-nf-client-connection-ip", "x-nf-request-id", "x-nf-geo",
+  "x-vercel-forwarded-for", "x-vercel-proxied-for",
+  "x-azure-clientip", "x-azure-socketip", "x-amz-cf-id",
+]);
+
 export default async function handler(req) {
   const target = req.headers.get("x-relay-target");
   const relayPath = req.headers.get("x-relay-path") || "/";
@@ -21,10 +37,9 @@ export default async function handler(req) {
   const targetUrl = target.replace(/\\/$/, "") + relayPath;
 
   const rawHeaders = {};
-  for (const [k, v] of req.headers.entries()) rawHeaders[k] = v;
-  delete rawHeaders["x-relay-target"];
-  delete rawHeaders["x-relay-path"];
-  delete rawHeaders["host"];
+  for (const [k, v] of req.headers.entries()) {
+    if (!STRIP_HEADERS.has(k.toLowerCase())) rawHeaders[k] = v;
+  }
 
   const response = await fetch(targetUrl, {
     method: req.method,

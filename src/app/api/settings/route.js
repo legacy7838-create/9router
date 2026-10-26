@@ -17,8 +17,9 @@ const PROTECTED_SETTING_KEYS = ["password", "sudoPasswordEncrypted"];
 export async function GET() {
   try {
     const settings = await getSettings();
-    const { password, oidcClientSecret, sudoPasswordEncrypted, ...safeSettings } = settings;
+    const { password, oidcClientSecret, sudoPasswordEncrypted, githubRelayPat, ...safeSettings } = settings;
     safeSettings.oidcConfigured = !!(safeSettings.oidcIssuerUrl && safeSettings.oidcClientId && oidcClientSecret);
+    safeSettings.githubRelayPatConfigured = !!githubRelayPat;
     
     const enableRequestLogs = process.env.ENABLE_REQUEST_LOGS === "true";
     
@@ -74,6 +75,13 @@ export async function PATCH(request) {
       }
     }
 
+    // Write-only: blank means "keep the stored token".
+    if (Object.prototype.hasOwnProperty.call(body, "githubRelayPat")) {
+      if (!body.githubRelayPat || !String(body.githubRelayPat).trim()) {
+        delete body.githubRelayPat;
+      }
+    }
+
     const settings = await updateSettings(body);
 
     // Apply outbound proxy settings immediately (no restart required)
@@ -106,8 +114,15 @@ export async function PATCH(request) {
         .catch((error) => console.warn("[AutoPing] settings update failed:", error.message));
     }
 
-    const { password, oidcClientSecret, ...safeSettings } = settings;
+    if (Object.prototype.hasOwnProperty.call(body, "githubRelayPat")) {
+      import("@/shared/services/githubRelayRefresh")
+        .then(({ configureGithubRelayRefresh }) => configureGithubRelayRefresh(settings))
+        .catch((error) => console.warn("[GithubRelay] settings update failed:", error.message));
+    }
+
+    const { password, oidcClientSecret, githubRelayPat, ...safeSettings } = settings;
     safeSettings.oidcConfigured = !!(safeSettings.oidcIssuerUrl && safeSettings.oidcClientId && oidcClientSecret);
+    safeSettings.githubRelayPatConfigured = !!githubRelayPat;
     return NextResponse.json(safeSettings, { headers: SETTINGS_RESPONSE_HEADERS });
   } catch (error) {
     console.log("Error updating settings:", error);

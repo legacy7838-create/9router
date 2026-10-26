@@ -12,6 +12,7 @@ const savedList = process.env.OC_PROXY_LIST;
 const savedFile = process.env.OC_PROXY_FILE;
 const savedAttempts = process.env.OC_TRANSIENT_RETRY_ATTEMPTS;
 const savedDelay = process.env.OC_TRANSIENT_RETRY_DELAY_MS;
+const savedQuotaCooldown = process.env.OC_QUOTA_COOLDOWN_MS;
 
 afterEach(() => {
   if (savedList === undefined) delete process.env.OC_PROXY_LIST;
@@ -22,6 +23,8 @@ afterEach(() => {
   else process.env.OC_TRANSIENT_RETRY_ATTEMPTS = savedAttempts;
   if (savedDelay === undefined) delete process.env.OC_TRANSIENT_RETRY_DELAY_MS;
   else process.env.OC_TRANSIENT_RETRY_DELAY_MS = savedDelay;
+  if (savedQuotaCooldown === undefined) delete process.env.OC_QUOTA_COOLDOWN_MS;
+  else process.env.OC_QUOTA_COOLDOWN_MS = savedQuotaCooldown;
 });
 
 function freeUsage429(retryAfter = "3600") {
@@ -80,6 +83,43 @@ describe("resolveBunProxyCandidates", () => {
         connectionNoProxy: "opencode.ai",
       }),
     ).toEqual([null]);
+  });
+
+  it("uses the lane pool for the built-in free lane when autoPool is set", () => {
+    process.env.OC_PROXY_LIST = "127.0.0.1:18101,127.0.0.1:18102";
+    process.env.OC_PROXY_FILE = "/nonexistent/proxies.txt";
+    expect(resolveBunProxyCandidates("https://opencode.ai", { autoPool: true })).toEqual([
+      "http://127.0.0.1:18101",
+      "http://127.0.0.1:18102",
+    ]);
+  });
+
+  it("autoPool keeps the relay first and appends the lane pool", () => {
+    process.env.OC_PROXY_LIST = "127.0.0.1:18101";
+    process.env.OC_PROXY_FILE = "/nonexistent/proxies.txt";
+    expect(
+      resolveBunProxyCandidates("https://opencode.ai", {
+        autoPool: true,
+        vercelRelayUrl: "https://relay.example.vercel.app",
+      }),
+    ).toEqual([
+      { relay: "https://relay.example.vercel.app" },
+      "http://127.0.0.1:18101",
+    ]);
+  });
+
+  it("appends relay fallbacks after the primary relay, deduped", () => {
+    delete process.env.OC_PROXY_LIST;
+    process.env.OC_PROXY_FILE = "/nonexistent/proxies.txt";
+    expect(
+      resolveBunProxyCandidates("https://opencode.ai", {
+        vercelRelayUrl: "https://leg1.trycloudflare.com",
+        vercelRelayFallbacks: ["https://leg2.trycloudflare.com", "https://leg1.trycloudflare.com", ""],
+      }),
+    ).toEqual([
+      { relay: "https://leg1.trycloudflare.com" },
+      { relay: "https://leg2.trycloudflare.com" },
+    ]);
   });
 
   it("falls back to a direct candidate when no proxy is configured", () => {
@@ -250,6 +290,63 @@ describe("opencodeBunFetchWithRotation", () => {
     expect(calls).toEqual([p1, p2]);
   });
 
+  it("routes through the Vercel relay instead of going direct", () => {
+    delete process.env.OC_PROXY_LIST;
+    process.env.OC_PROXY_FILE = "/nonexistent/proxies.txt";
+    expect(
+      resolveBunProxyCandidates("https://opencode.ai", {
+        connectionProxyEnabled: false,
+        vercelRelayUrl: "https://relay.example.vercel.app",
+      }),
+    ).toEqual([{ relay: "https://relay.example.vercel.app" }]);
+  });
+
+  it("prefers the relay, then the configured proxy and pool", () => {
+    process.env.OC_PROXY_LIST = "127.0.0.1:18090";
+    process.env.OC_PROXY_FILE = "/nonexistent/proxies.txt";
+    expect(
+      resolveBunProxyCandidates("https://opencode.ai", {
+        connectionProxyEnabled: true,
+        connectionProxyUrl: "127.0.0.1:7890",
+        vercelRelayUrl: "https://relay.example.vercel.app",
+      }),
+    ).toEqual([
+      { relay: "https://relay.example.vercel.app" },
+      "http://127.0.0.1:7890",
+      "http://127.0.0.1:18090",
+    ]);
+  });
+
+  it("retries the next egress when a relay returns a quota 429", async () => {
+    const relay = { relay: "https://relay.example.vercel.app" };
+    const proxy = uniqueProxy("r1");
+    const calls = [];
+    const fetchImpl = async (_url, _init, egress) => {
+      calls.push(egress);
+      return egress === relay ? freeUsage429("3600") : new Response("ok", { status: 200 });
+    };
+
+    const res = await opencodeBunFetchWithRotation("https://opencode.ai", {}, [relay, proxy], fetchImpl);
+    expect(res.status).toBe(200);
+    expect(calls).toEqual([relay, proxy]);
+  });
+
+  it("retries the next relay leg when the first leg's runner IP is out of quota", async () => {
+    const tag = Math.random().toString(36).slice(2);
+    const leg1 = { relay: `https://leg1-${tag}.trycloudflare.com` };
+    const leg2 = { relay: `https://leg2-${tag}.trycloudflare.com` };
+    const leg3 = { relay: `https://leg3-${tag}.trycloudflare.com` };
+    const calls = [];
+    const fetchImpl = async (_url, _init, egress) => {
+      calls.push(egress);
+      return egress === leg1 ? freeUsage429("54000") : new Response("ok", { status: 200 });
+    };
+
+    const res = await opencodeBunFetchWithRotation("https://opencode.ai", {}, [leg1, leg2, leg3], fetchImpl);
+    expect(res.status).toBe(200);
+    expect(calls).toEqual([leg1, leg2]);
+  });
+
   it("prunes expired cooldown state during maintenance", async () => {
     const p1 = uniqueProxy("i1");
     const p2 = uniqueProxy("i2");
@@ -267,6 +364,23 @@ describe("opencodeBunFetchWithRotation", () => {
 
     await runOpencodeMaintenance(Date.now() + 3_601_000);
 
+    await opencodeBunFetchWithRotation("https://opencode.ai", {}, [p1, p2], fetchImpl);
+    expect(calls).toBe(4);
+  });
+
+  it("re-checks a quota-parked egress after the cooldown cap", async () => {
+    process.env.OC_QUOTA_COOLDOWN_MS = "20";
+    const p1 = uniqueProxy("l1");
+    const p2 = uniqueProxy("l2");
+    let calls = 0;
+    const fetchImpl = async () => {
+      calls++;
+      return freeUsage429("3600");
+    };
+
+    await opencodeBunFetchWithRotation("https://opencode.ai", {}, [p1, p2], fetchImpl);
+    expect(calls).toBe(2);
+    await new Promise((resolve) => setTimeout(resolve, 40));
     await opencodeBunFetchWithRotation("https://opencode.ai", {}, [p1, p2], fetchImpl);
     expect(calls).toBe(4);
   });
